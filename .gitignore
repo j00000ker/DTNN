@@ -40,6 +40,9 @@ env/
 *.ubyte
 data/
 
+# Claude Code personal settings
+.claude/
+
 # OS files
 .DS_Store
 Thumbs.db
