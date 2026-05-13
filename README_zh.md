@@ -2,49 +2,39 @@
 
 [English](README.md) | **中文**
 
-Code for the paper **"Predicting High-Frequency Stock Movement with Differential Transformer Neural Network"**（[Electronics 2023, 12(13), 2943](https://doi.org/10.3390/electronics12132943)）。
+论文 **"Predicting High-Frequency Stock Movement with Differential Transformer Neural Network"** 的官方代码（[Electronics 2023, 12(13), 2943](https://doi.org/10.3390/electronics12132943)）。
 
-DTNN 是一种用于高频股票市场预测的混合深度学习架构。它将三条并行编码器——时序卷积网络（TCN）、时序注意力层（TABL）和原始恒等直通——的输出拼接后沿时间轴做差分，再送入带有 class token 的 Transformer 编码器进行分类。
+完整的论文内容总结（架构细节、实验结果、消融实验）见 [PAPER_zh.md](PAPER_zh.md)。
 
 ## 架构
 
 ```
-输入: (batch, time_steps, features)
+LOB 输入: (batch, T=100, features=40→60)
   |
   |-- TCN 分支 ────────────┐
-  |-- TABL 分支 ───────────┤── 拼接 ── 线性嵌入 ── 时序差分
-  |-- 恒等直通 ─────────────┘                              |
-                                                          v
-                                           CLS token + 位置嵌入
-                                                          |
-                                                      Transformer
-                                                          |
-                                                       MLP 分类头
-                                                          |
-                                                   3 类 softmax 输出
+  |-- TABL 分支 ───────────┤── 拼接 ── 线性嵌入 ── 差分层
+  |-- 恒等直通 ─────────────┘                            |
+                                                        v
+                                             CLS token + 位置嵌入
+                                                        |
+                                                    Transformer
+                                                        |
+                                                     MLP 分类头
+                                                        |
+                                                 3 类 logits 输出
 ```
+
+三条并行编码器（TCN、TABL、恒等映射）的输出拼接后投影到统一维度，沿时间轴做一阶差分。随后加入 CLS token 和位置嵌入，经 Transformer 编码器处理，提取 CLS 输出通过 MLP 分类头做 3 类预测。**差分层**是核心贡献——它让 Transformer 关注相邻时间片之间的*变化*而非绝对位置。
 
 ## 安装
 
 ```bash
-# 克隆仓库
 git clone https://github.com/j00000ker/DTNN.git
 cd DTNN
-
-# 可编辑模式安装
 pip install -e .
-
-# 或仅安装依赖
-pip install -r requirements.txt
 ```
 
-### 依赖
-
-- Python >= 3.8
-- PyTorch >= 1.9.0
-- NumPy、Pandas、SciPy、scikit-learn
-- einops
-- Matplotlib、tqdm
+需要 Python >= 3.8、PyTorch >= 1.9.0、NumPy、Pandas、SciPy、scikit-learn、einops、Matplotlib、tqdm。
 
 ## 快速开始
 
@@ -52,33 +42,19 @@ pip install -r requirements.txt
 import torch
 from dtnn import DTNN
 
-# 创建模型：100 个时间步，60 维特征，3 个输出类别
-model = DTNN(
-    time_slices=100,
-    num_classes=3,
-    dim=60,
-    depth=3,
-    heads=32,
-)
+model = DTNN(time_slices=100, num_classes=3, dim=60, depth=3, heads=32)
 
-# 前向传播
-x = torch.randn(4, 100, 60)  # (batch=4, time=100, features=60)
-output = model(x)             # (4, 3) — 概率分布
+x = torch.randn(4, 100, 60)   # (batch=4, time=100, features=60)
+output = model(x)              # (4, 3) — 原始 logits（配合 CrossEntropyLoss 使用）
 ```
 
-### 基线模型
-
-本包也包含了论文中用于对比的基线模型：
+论文中的基线模型也包含在内：
 
 ```python
 from dtnn import LSTM, CNN, CNN_LSTM, MLP, SVM, C_TABL
-
-model = LSTM(time_slices=100, dim=60, num_classes=3)
 ```
 
 ## 训练
-
-`train.py` 脚本用于复现论文中的实验：
 
 ```bash
 python train.py \
@@ -91,45 +67,30 @@ python train.py \
     --model-name dtnn_experiment
 ```
 
-参数说明：
-
 | 参数 | 默认值 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | `--data-path` | `''` | 存放 `.txt` 数据文件的目录 |
 | `--batch-size` | 64 | 批大小 |
 | `--lr` | 1e-4 | 学习率 |
 | `--epochs` | 150 | 训练轮数 |
-| `--depth` | 3 | Transformer 深度 |
+| `--depth` | 3 | Transformer 层数 |
 | `--heads` | 32 | 注意力头数 |
 | `--k` | 1 | 标签列索引 |
 | `--T` | 100 | 时间窗口长度 |
 | `--seed` | 42 | 随机种子 |
-| `--use-sampler` | 关闭 | 启用加权采样以处理类别不平衡 |
+| `--use-sampler` | 关闭 | 加权采样处理类别不平衡 |
 
 ## 数据格式
 
-训练脚本期望的文本文件中，每列为一个时间序列特征，每行为一个时间步。数据加载流程：
+输入为每时间片 40 维 LOB 特征（10 档 × {卖价, 卖量, 买价, 买量}）。标签为 3 类（上涨 / 不变 / 下跌），由预测周期 k 内的平均收益率是否超过阈值定义。
 
-1. 取前 40 行作为基础特征
-2. 计算相邻列的逐对乘积（额外 20 个特征）
-3. 取最后 5 行作为标签基
-4. 创建长度为 `T` 的滑动窗口用于训练
+数据处理流程：原始 `.txt` → `prepare_x`（40 特征 + 20 个两两交互特征 = 60 维）→ 长度 T 的滑动窗口 → `StockDataset`（1 索引标签转 0 索引）。
 
 ## TCN 基准测试
 
-`TCN/` 目录包含了使用时序卷积网络的标准序列建模基准测试，包括：
-
-- Adding Problem
-- Copy Memory
-- Sequential / Permuted MNIST
-- 字符级语言模型（Penn Treebank）
-- 词级语言模型（Penn Treebank / WikiText-103）
-- 复调音乐（JSB Chorales、Nottingham、MuseData、Piano-midi）
-- LAMBADA 文本理解
+`TCN/` 目录包含标准 TCN 序列建模基准（Adding Problem、Copy Memory、Sequential/Permuted MNIST、字符级/词级语言模型、复调音乐、LAMBADA）。
 
 ## 引用
-
-如果你在研究中使用了本代码，请引用：
 
 ```bibtex
 @article{Lai2023DTNN,
@@ -146,4 +107,4 @@ python train.py \
 
 ## 许可证
 
-MIT License — 详见 [LICENSE](LICENSE)。
+MIT — 详见 [LICENSE](LICENSE)。
