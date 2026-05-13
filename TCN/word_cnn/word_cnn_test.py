@@ -3,10 +3,7 @@ import time
 import math
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 import torch.optim as optim
-import sys
-sys.path.append("../../")
 from TCN.word_cnn.utils import *
 from TCN.word_cnn.model import *
 import pickle
@@ -174,9 +171,8 @@ if __name__ == "__main__":
 
             # Save the model if the validation loss is the best we've seen so far.
             if val_loss < best_vloss:
-                with open("model.pt", 'wb') as f:
-                    print('Save model!\n')
-                    torch.save(model, f)
+                print('Save model!\n')
+                torch.save(model.state_dict(), "model.pt")
                 best_vloss = val_loss
 
             # Anneal the learning rate if the validation loss plateaus
@@ -191,8 +187,7 @@ if __name__ == "__main__":
         print('Exiting from training early')
 
     # Load the best saved model.
-    with open("model.pt", 'rb') as f:
-        model = torch.load(f)
+    model.load_state_dict(torch.load("model.pt"))
 
     # Run on test data.
     test_loss = evaluate(test_data)

@@ -1,273 +1,131 @@
-import os
-import os
+"""Training script for DTNN on high-frequency stock data.
 
-# os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+Usage::
 
-# load packages
-import pandas as pd
-import pickle
+    python train.py --data-path /path/to/data/ --k 1 --epochs 150
+"""
+
+import argparse
 import numpy as np
 import matplotlib
 
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
-from datetime import datetime
-from tqdm import tqdm
-from sklearn.metrics import accuracy_score, classification_report
 
 import torch
-import torch.nn.functional as F
-from torch.utils import data
 from torchinfo import summary
-import torch.nn as nn
-import torch.optim as optim
-from torch import nn, einsum
-import torch.nn.functional as F
-from TCN.tcn import TemporalConvNet
-from torch.utils.data import WeightedRandomSampler
-from einops import rearrange, repeat
-from einops.layers.torch import Rearrange
-from model import DTNN
+
+from dtnn.models import DTNN
+from dtnn.data_utils import StockDataset, get_sampler
+from dtnn.train_utils import train_model, evaluate
+from sklearn.metrics import accuracy_score, classification_report
 
 
-# from sklearn.model_selection import train_test_split
-# X_train, X_test, y_train, y_test = train_test_split(data.data, data.target, test_size=0.33)
-# N, D = X_train.shape
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-
-def get_sampler(label):
-    class_counts=[0,0,0]
-    for i in range(3):
-        class_counts[i]=(label==i).sum()
-    print('target train 0/1/2: {}/{}/{}'.format(class_counts[0], class_counts[1], class_counts[2]))
-    weights=np.zeros(len(label))
-    for i in range(len(label)):
-        weights[i]=1./class_counts[int(label[i].detach())]
-    sampler=WeightedRandomSampler(weights,3)
-    return sampler
-
-
-
-
-def prepare_x(data):
-    df1 = data[:40, :].T
-    for i in range(20):
-        df1 = np.hstack((df1, (df1[:, 2 * i] * df1[:, 2 * i + 1]).reshape(-1, 1)))
-    return np.array(df1)
-
-
-def get_label(data):
-    lob = data[-5:, :].T
-    return lob
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train DTNN on stock data')
+    parser.add_argument('--data-path', type=str, default='',
+                        help='Path to directory containing train/test .txt files')
+    parser.add_argument('--batch-size', type=int, default=64)
+    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--epochs', type=int, default=150)
+    parser.add_argument('--depth', type=int, default=3)
+    parser.add_argument('--heads', type=int, default=32)
+    parser.add_argument('--k', type=int, default=1,
+                        help='Label column index (0-based)')
+    parser.add_argument('--T', type=int, default=100,
+                        help='Time window length')
+    parser.add_argument('--num-classes', type=int, default=3)
+    parser.add_argument('--model-name', type=str, default='dtnn_pytorch',
+                        help='Filename prefix for saved model and loss plot')
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--use-sampler', action='store_true',
+                        help='Use WeightedRandomSampler for class imbalance')
+    parser.add_argument('--train-file', type=str, default='Train_Dst_NoAuction_DecPre_CF_7.txt')
+    parser.add_argument('--test-files', type=str, nargs='+',
+                        default=['Test_Dst_NoAuction_DecPre_CF_7.txt',
+                                 'Test_Dst_NoAuction_DecPre_CF_8.txt',
+                                 'Test_Dst_NoAuction_DecPre_CF_9.txt'])
+    return parser.parse_args()
 
 
-def data_classification(X, Y, T):
-    [N, D] = X.shape
-    df = np.array(X)
+def main():
+    args = parse_args()
 
-    dY = np.array(Y)
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
 
-    dataY = dY[T - 1:N]
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(f'Device: {device}')
+    print(f'depth={args.depth}, LR={args.lr}, k={args.k}')
 
-    dataX = np.zeros((N - T + 1, T, D))
-    for i in range(T, N + 1):
-        dataX[i - T] = df[i - T:i, :]
+    # --- Load data ---
+    path = args.data_path
+    raw_data = np.loadtxt(path + args.train_file)
+    train_raw = raw_data[:, :int(np.floor(raw_data.shape[1] * 0.8))]
+    val_raw = raw_data[:, int(np.floor(raw_data.shape[1] * 0.8)):]
 
-    return dataX, dataY
+    test_parts = [np.loadtxt(path + f) for f in args.test_files]
+    test_raw = np.hstack(test_parts)
 
+    print(train_raw.shape, val_raw.shape, test_raw.shape)
 
-def torch_data(x, y):
-    x = torch.from_numpy(x)
-    x = torch.unsqueeze(x, 1)
-    y = torch.from_numpy(y)
-    y = F.one_hot(y, num_classes=3)
-    return x, y
+    # --- Build datasets ---
+    dataset_train = StockDataset(data_array=train_raw, k=args.k, num_classes=args.num_classes, T=args.T)
+    dataset_val = StockDataset(data_array=val_raw, k=args.k, num_classes=args.num_classes, T=args.T)
+    dataset_test = StockDataset(data_array=test_raw, k=args.k, num_classes=args.num_classes, T=args.T)
 
+    if args.use_sampler:
+        sampler = get_sampler(dataset_train.y)
+        train_loader = torch.utils.data.DataLoader(
+            dataset=dataset_train, batch_size=args.batch_size, sampler=sampler
+        )
+    else:
+        train_loader = torch.utils.data.DataLoader(
+            dataset=dataset_train, batch_size=args.batch_size, shuffle=True
+        )
 
-class Dataset(data.Dataset):
-    """Characterizes a dataset for PyTorch"""
-
-    def __init__(self, data, k, num_classes, T):
-        """Initialization"""
-        self.k = k
-        self.num_classes = num_classes
-        self.T = T
-
-        x = prepare_x(data)
-        y = get_label(data)
-        x, y = data_classification(x, y, self.T)
-        y = y[:, self.k] - 1
-        self.length = len(x)
-
-        x = torch.from_numpy(x)
-        self.x = torch.squeeze(x)
-        self.y = torch.from_numpy(y)
-
-    def __len__(self):
-        """Denotes the total number of samples"""
-        return self.length
-
-    def __getitem__(self, index):
-        """Generates samples of data"""
-        return self.x[index], self.y[index]
-
-
-def batch_gd(model, criterion, optimizer, train_loader, test_loader, epochs, model_name, device):
-    train_losses = np.zeros(epochs)
-    test_losses = np.zeros(epochs)
-    best_test_loss = np.inf
-    best_test_epoch = 0
-
-    for it in range(epochs):
-
-        model.train()
-        t0 = datetime.now()
-        train_loss = []
-        for inputs, targets in train_loader:
-            # move data to GPU
-            inputs, targets = inputs.to(device, dtype=torch.float), targets.to(device, dtype=torch.int64)
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            optimizer.zero_grad()
-            # Backward and optimize
-            loss.backward()
-            optimizer.step()
-            train_loss.append(loss.item())
-        # Get train loss and test loss
-        train_loss = np.mean(train_loss)  # a little misleading
-
-        model.eval()
-        test_loss = []
-        for inputs, targets in test_loader:
-            inputs, targets = inputs.to(device, dtype=torch.float), targets.to(device, dtype=torch.int64)
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            test_loss.append(loss.item())
-        test_loss = np.mean(test_loss)
-
-        # Save losses
-        train_losses[it] = train_loss
-        test_losses[it] = test_loss
-
-        if test_loss < best_test_loss:
-            torch.save(model, './' + model_name)
-            best_test_loss = test_loss
-            best_test_epoch = it
-            print('model saved')
-
-        dt = datetime.now() - t0
-        print(f'Epoch {it + 1}/{epochs}, Train Loss: {train_loss:.4f}, \
-          Validation Loss: {test_loss:.4f}, Duration: {dt}, Best Val Epoch: {best_test_epoch + 1}')
-
-    return train_losses, test_losses
-
-
-
-if __name__ == '__main__':
-
-    print(device)
-    batch_size = 64
-    LR = 1e-4
-    depth=3
-    k=1
-    print('depth={},LR={},k={}.'.format(depth,LR,k))
-    model_name = 'd3^lr1e-4_pytorch_diff75'
-    path=''
-    dec_data = np.loadtxt(path +  'Train_Dst_NoAuction_DecPre_CF_7.txt')
-    dec_train = dec_data[:, :int(np.floor(dec_data.shape[1] * 0.8))]
-    dec_val = dec_data[:, int(np.floor(dec_data.shape[1] * 0.8)):]
-
-    dec_test1 = np.loadtxt(path +  'Test_Dst_NoAuction_DecPre_CF_7.txt')
-    dec_test2 = np.loadtxt(path + 'Test_Dst_NoAuction_DecPre_CF_8.txt')
-    dec_test3 = np.loadtxt(path +  'Test_Dst_NoAuction_DecPre_CF_9.txt')
-    dec_test = np.hstack((dec_test1, dec_test2, dec_test3))
-
-    print(dec_train.shape, dec_val.shape,
-          dec_test.shape
-          )
-
-    dataset_train = Dataset(data=dec_train, k=k, num_classes=3, T=100)
-    dataset_val = Dataset(data=dec_val, k=k, num_classes=3, T=100)
-    dataset_test = Dataset(data=dec_test, k=k, num_classes=3, T=100)
-    sampler=get_sampler(dataset_train.y)
-    train_loader = torch.utils.data.DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=True)
-    #train_loader = torch.utils.data.DataLoader(dataset=dataset_train, batch_size=batch_size, sampler=sampler)
-    val_loader = torch.utils.data.DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=False)
-    test_loader = torch.utils.data.DataLoader(dataset=dataset_test, batch_size=batch_size, shuffle=False)
+    val_loader = torch.utils.data.DataLoader(dataset=dataset_val, batch_size=args.batch_size, shuffle=False)
+    test_loader = torch.utils.data.DataLoader(dataset=dataset_test, batch_size=args.batch_size, shuffle=False)
 
     print(dataset_train.x.shape, dataset_train.y.shape)
 
-    tmp_loader = torch.utils.data.DataLoader(dataset=dataset_train, batch_size=1, shuffle=True)
-    for x, y in tmp_loader:
-        print(x)
-        print(y)
-        print(x.shape, y.shape)
-        break
-
-    print(dataset_train.x.shape)
-    model = DTNN(time_slices=dataset_train.x.shape[1], num_classes=3, dim=dataset_train.x.shape[2],
-                    depth=depth, heads=32, mlp_dim=2 * dataset_train.x.shape[2])
+    # --- Build model ---
+    model = DTNN(
+        time_slices=dataset_train.x.shape[1],
+        num_classes=args.num_classes,
+        dim=dataset_train.x.shape[2],
+        depth=args.depth,
+        heads=args.heads,
+    )
     model.to(device)
 
-    summary(model, [1, 100, 60])
+    summary(model, [1, args.T, dataset_train.x.shape[2]])
 
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+    # --- Train ---
+    model_path = f'./{args.model_name}.pth'
+    train_losses, val_losses = train_model(
+        model, criterion, optimizer,
+        train_loader, val_loader,
+        epochs=args.epochs, model_path=model_path, device=device,
+    )
 
-    train_losses, val_losses = batch_gd(model, criterion, optimizer,
-                                        train_loader, val_loader, epochs=150, model_name=model_name, device=device)
-
+    # --- Plot loss curves ---
     plt.figure(figsize=(15, 6))
     plt.plot(train_losses, label='train loss')
     plt.plot(val_losses, label='validation loss')
-    plt.savefig(model_name + '_loss.jpg')
+    plt.savefig(f'{args.model_name}_loss.jpg')
 
+    # --- Evaluate ---
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    test_acc, all_targets, all_predictions = evaluate(model, test_loader, device)
 
-    model = torch.load(model_name)
-
-    n_correct = 0.
-    n_total = 0.
-    for inputs, targets in test_loader:
-        # Move to GPU
-        inputs, targets = inputs.to(device, dtype=torch.float), targets.to(device, dtype=torch.int64)
-
-        # Forward pass
-        outputs = model(inputs)
-
-        # Get prediction
-        # torch.max returns both max and argmax
-        _, predictions = torch.max(outputs, 1)
-
-        # update counts
-        n_correct += (predictions == targets).sum().item()
-        n_total += targets.shape[0]
-
-    test_acc = n_correct / n_total
-    print(f"Test acc: {test_acc:.4f}")
-
-    # model = torch.load('best_val_model_pytorch')
-    all_targets = []
-    all_predictions = []
-
-    for inputs, targets in test_loader:
-        # Move to GPU
-        inputs, targets = inputs.to(device, dtype=torch.float), targets.to(device, dtype=torch.int64)
-
-        # Forward pass
-        outputs = model(inputs)
-
-        # Get prediction
-        # torch.max returns both max and argmax
-        _, predictions = torch.max(outputs, 1)
-
-        all_targets.append(targets.cpu().numpy())
-        all_predictions.append(predictions.cpu().numpy())
-
-    all_targets = np.concatenate(all_targets)
-    all_predictions = np.concatenate(all_predictions)
-
+    print(f'Test acc: {test_acc:.4f}')
     print('accuracy_score:', accuracy_score(all_targets, all_predictions))
     print(classification_report(all_targets, all_predictions, digits=4))
+
+
+if __name__ == '__main__':
+    main()

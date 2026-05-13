@@ -2,8 +2,6 @@ import torch
 import argparse
 import torch.optim as optim
 import torch.nn.functional as F
-import sys
-sys.path.append("../../")
 from TCN.adding_problem.model import TCN
 from TCN.adding_problem.utils import data_generator
 

@@ -2,10 +2,7 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.autograd import Variable
 import numpy as np
-import sys
-sys.path.append("../../")
 from TCN.copy_memory.utils import data_generator
 from TCN.copy_memory.model import TCN
 import time

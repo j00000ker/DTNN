@@ -1,13 +1,9 @@
 import unidecode
 import torch
-from torch.autograd import Variable
 from collections import Counter
 import observations
 import os
 import pickle
-
-
-cuda = torch.cuda.is_available()
 
 
 def data_generator(args):
@@ -16,18 +12,6 @@ def data_generator(args):
     valfile_len = len(valfile)
     testfile_len = len(testfile)
     corpus = Corpus(file + " " + valfile + " " + testfile)
-
-    #############################################################
-    # Use the following if you want to pickle the loaded data
-    #
-    # pickle_name = "{0}.corpus".format(args.dataset)
-    # if os.path.exists(pickle_name):
-    #     corpus = pickle.load(open(pickle_name, 'rb'))
-    # else:
-    #     corpus = Corpus(file + " " + valfile + " " + testfile)
-    #     pickle.dump(corpus, open(pickle_name, 'wb'))
-    #############################################################
-
     return file, file_len, valfile, valfile_len, testfile, testfile_len, corpus
 
 
@@ -67,7 +51,9 @@ def char_tensor(corpus, string):
     tensor = torch.zeros(len(string)).long()
     for i in range(len(string)):
         tensor[i] = corpus.dict.char2idx[string[i]]
-    return Variable(tensor).cuda() if cuda else Variable(tensor)
+    if torch.cuda.is_available():
+        tensor = tensor.cuda()
+    return tensor
 
 
 def batchify(data, batch_size, args):
@@ -93,7 +79,7 @@ def get_batch(source, start_index, args):
 
 def save(model):
     save_filename = 'model.pt'
-    torch.save(model, save_filename)
+    torch.save(model.state_dict(), save_filename)
     print('Saved as %s' % save_filename)
 
 

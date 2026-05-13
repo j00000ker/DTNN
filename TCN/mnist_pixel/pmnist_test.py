@@ -1,9 +1,6 @@
 import torch
-from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
-import sys
-sys.path.append("../../")
 from TCN.mnist_pixel.utils import data_generator
 from TCN.mnist_pixel.model import TCN
 import numpy as np
@@ -76,7 +73,7 @@ def train(ep):
         data = data.view(-1, input_channels, seq_length)
         if args.permute:
             data = data[:, :, permute]
-        data, target = Variable(data), Variable(target)
+        # data and target are already tensors from the DataLoader
         optimizer.zero_grad()
         output = model(data)
         loss = F.nll_loss(output, target)
@@ -104,9 +101,9 @@ def test():
             data = data.view(-1, input_channels, seq_length)
             if args.permute:
                 data = data[:, :, permute]
-            data, target = Variable(data, volatile=True), Variable(target)
+            # data and target are already tensors from the DataLoader
             output = model(data)
-            test_loss += F.nll_loss(output, target, size_average=False).item()
+            test_loss += F.nll_loss(output, target, reduction='sum').item()
             pred = output.data.max(1, keepdim=True)[1]
             correct += pred.eq(target.data.view_as(pred)).cpu().sum()
 

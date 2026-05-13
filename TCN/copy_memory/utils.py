@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from torch.autograd import Variable
 
 
 def data_generator(T, mem_length, b_size):
@@ -20,5 +19,4 @@ def data_generator(T, mem_length, b_size):
     x = torch.cat((seq, zeros[:, :-1], marker), 1)
     y = torch.cat((placeholders, zeros, seq), 1).long()
 
-    x, y = Variable(x), Variable(y)
     return x, y

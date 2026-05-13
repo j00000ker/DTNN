@@ -1,6 +1,5 @@
 import os
 import torch
-from torch.autograd import Variable
 import pickle
 
 """
@@ -83,6 +82,6 @@ def batchify(data, batch_size, args):
 
 def get_batch(source, i, args, seq_len=None, evaluation=False):
     seq_len = min(seq_len if seq_len else args.seq_len, source.size(1) - 1 - i)
-    data = Variable(source[:, i:i+seq_len], volatile=evaluation)
-    target = Variable(source[:, i+1:i+1+seq_len])     # CAUTION: This is un-flattened!
+    data = source[:, i:i+seq_len]
+    target = source[:, i+1:i+1+seq_len]     # CAUTION: This is un-flattened!
     return data, target

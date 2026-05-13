@@ -3,10 +3,7 @@ import time
 import math
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 import torch.optim as optim
-import sys
-sys.path.append("../../")
 from TCN.lambada_language.utils import *
 from TCN.lambada_language.model import TCN
 import pickle
@@ -90,8 +87,8 @@ def evaluate(data_source):
     correct = 0
     with torch.no_grad():
         for i in range(len(data_source)):
-            data, targets = torch.LongTensor(data_source[i]).view(1, -1), torch.LongTensor([data_source[i][-1]]).view(1, -1)
-            data, targets = Variable(data), Variable(targets)
+            data = torch.LongTensor(data_source[i]).view(1, -1)
+            targets = torch.LongTensor([data_source[i][-1]]).view(1, -1)
             if args.cuda:
                 data, targets = data.cuda(), targets.cuda()
             output = model(data)
@@ -158,9 +155,8 @@ if __name__ == "__main__":
             # Save the model if the validation loss is the best we've seen so far.
 
             if val_loss < best_vloss:
-                with open("model.pt", 'wb') as f:
-                    print('Save model!\n')
-                    torch.save(model, f)
+                print('Save model!\n')
+                torch.save(model.state_dict(), "model.pt")
                 best_vloss = val_loss
             if epoch > 5 and val_loss >= max(all_vloss[-5:]):
                 lr = lr / 10.
@@ -173,8 +169,7 @@ if __name__ == "__main__":
         print('Exiting from training early')
 
     # Load the best saved model.
-    with open("model.pt", 'rb') as f:
-        model = torch.load(f)
+    model.load_state_dict(torch.load("model.pt"))
 
     # Run on test data.
     test_loss = evaluate(test_data)

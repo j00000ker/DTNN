@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "dtnn"
+version = "0.1.0"
+description = "Differential Transformer Neural Network for High-Frequency Stock Movement Prediction"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=1.9.0",
+    "numpy>=1.19.0",
+    "pandas>=1.2.0",
+    "scikit-learn>=0.24.0",
+    "scipy>=1.6.0",
+    "matplotlib>=3.3.0",
+    "tqdm>=4.50.0",
+    "einops>=0.3.0",
+    "torchinfo>=1.5.0",
+    "torchvision>=0.10.0",
+    "unidecode>=1.2.0",
+    "observations>=0.1.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["TCN*"]
+
+[tool.black]
+line-length = 120
+target-version = ['py38']
+
+[tool.isort]
+profile = "black"
+line_length = 120

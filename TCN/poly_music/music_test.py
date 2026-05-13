@@ -1,10 +1,7 @@
 import argparse
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 import torch.optim as optim
-import sys
-sys.path.append("../../")
 from TCN.poly_music.model import TCN
 from TCN.poly_music.utils import data_generator
 import numpy as np
@@ -71,7 +68,7 @@ def evaluate(X_data, name='Eval'):
     with torch.no_grad():
         for idx in eval_idx_list:
             data_line = X_data[idx]
-            x, y = Variable(data_line[:-1]), Variable(data_line[1:])
+            x, y = data_line[:-1], data_line[1:]
             if args.cuda:
                 x, y = x.cuda(), y.cuda()
             output = model(x.unsqueeze(0)).squeeze(0)
@@ -92,7 +89,7 @@ def train(ep):
     np.random.shuffle(train_idx_list)
     for idx in train_idx_list:
         data_line = X_train[idx]
-        x, y = Variable(data_line[:-1]), Variable(data_line[1:])
+        x, y = data_line[:-1], data_line[1:]
         if args.cuda:
             x, y = x.cuda(), y.cuda()
 
@@ -123,9 +120,8 @@ if __name__ == "__main__":
         vloss = evaluate(X_valid, name='Validation')
         tloss = evaluate(X_test, name='Test')
         if vloss < best_vloss:
-            with open(model_name, "wb") as f:
-                torch.save(model, f)
-                print("Saved model!\n")
+            torch.save(model.state_dict(), model_name)
+            print("Saved model!\n")
             best_vloss = vloss
         if ep > 10 and vloss > max(vloss_list[-3:]):
             lr /= 10
@@ -135,6 +131,6 @@ if __name__ == "__main__":
         vloss_list.append(vloss)
 
     print('-' * 89)
-    model = torch.load(open(model_name, "rb"))
+    model.load_state_dict(torch.load(model_name))
     tloss = evaluate(X_test)
 

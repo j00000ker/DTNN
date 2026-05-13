@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile dtnn/models/dtnn.py)",
+      "Bash(python -m py_compile dtnn/models/baselines.py)",
+      "Bash(python -m py_compile dtnn/modules/tabl.py)",
+      "Bash(python -m py_compile dtnn/modules/tcn.py)",
+      "Bash(python -m py_compile dtnn/data_utils.py)",
+      "Bash(mkdir -p \"C:/Users/WINDOWS/.claude/projects/c--Users-WINDOWS-Documents-GitHub-DTNN/memory\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\WINDOWS\\.claude\\projects\\c--Users-WINDOWS-Documents-GitHub-DTNN"
+    ]
+  }
+}

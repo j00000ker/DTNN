@@ -1,8 +1,6 @@
 import argparse
 import torch.nn as nn
 import torch.optim as optim
-import sys
-sys.path.append("../../")
 from TCN.char_cnn.utils import *
 from TCN.char_cnn.model import TCN
 import time
